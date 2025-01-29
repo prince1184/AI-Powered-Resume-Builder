@@ -1,0 +1,29 @@
+# Backend (Flask API)
+flask
+flask-cors
+flask-sqlalchemy
+gunicorn  # For deployment
+
+# AI Model (NLP)
+transformers
+nltk
+openai  # If using GPT API
+
+# PDF Generation
+fpdf
+pdfkit
+
+# Web Scraping (LinkedIn Integration)
+selenium
+beautifulsoup4
+
+# Frontend (Streamlit)
+streamlit
+requests
+
+# Database (Optional: Use only if needed)
+psycopg2  # PostgreSQL (remove if using SQLite)
+
+# Other Utilities
+pandas
+numpy
