@@ -111,5 +111,5 @@ This project is licensed under the MIT License. Feel free to modify and distribu
 ---
 
 ## Contact
-For any issues, contact **[Your Name]** at [your-email@example.com].
+For any issues, contact **PrinceSharma** at princesharma8894@gmail.com.
 
