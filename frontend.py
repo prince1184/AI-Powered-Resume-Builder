@@ -1,240 +1,273 @@
-import requests
 import streamlit as st
+import requests
+from datetime import datetime
 import json
 
 # Page configuration
 st.set_page_config(
-    page_title="AI Resume Builder",
-    page_icon="📝",
+    page_title="AI Resume Builder Pro",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for modern design
 st.markdown("""
     <style>
-    .main {
-        padding: 2rem;
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+    
+    * {
+        font-family: 'Poppins', sans-serif;
     }
     
-    h1, h2, h3 {
-        color: #1E88E5;
+    .main {
+        background-color: #f8f9fa;
+    }
+    
+    .stApp header {
+        background-color: transparent;
+    }
+    
+    .css-1r6slb0 {
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin: 1rem 0;
+        padding: 2rem;
+        background: white;
+        transition: transform 0.3s ease;
+    }
+    
+    .css-1r6slb0:hover {
+        transform: translateY(-5px);
     }
     
     .stTextInput > div > div > input,
     .stTextArea > div > div > textarea {
-        background-color: #f8f9fa;
-        border: 1px solid #e0e0e0;
-        padding: 10px;
-        border-radius: 5px;
-        color: #000000;
-        font-size: 16px;
-    }
-    
-    /* Dark theme support */
-    @media (prefers-color-scheme: dark) {
-        .stTextInput > div > div > input,
-        .stTextArea > div > div > textarea {
-            background-color: #2b2b2b;
-            color: #ffffff;
-            border-color: #404040;
-        }
+        border-radius: 10px;
+        border: 2px solid #e0e0e0;
+        padding: 1rem;
+        font-size: 1rem;
+        transition: all 0.3s ease;
+        background-color: #ffffff;
+        color: #333333;
     }
     
     .stTextInput > div > div > input:focus,
     .stTextArea > div > div > textarea:focus {
-        border-color: #1E88E5;
-        box-shadow: 0 0 0 2px rgba(30,136,229,0.2);
+        border-color: #6c63ff;
+        box-shadow: 0 0 0 2px rgba(108, 99, 255, 0.2);
     }
     
     .stButton > button {
-        width: 100%;
-        background-color: #1E88E5;
+        border-radius: 10px;
+        padding: 0.8rem 1.5rem;
+        background: linear-gradient(45deg, #6c63ff, #4c46b3);
         color: white;
         border: none;
-        padding: 10px 20px;
-        border-radius: 5px;
         font-weight: 600;
+        letter-spacing: 0.5px;
         transition: all 0.3s ease;
     }
     
     .stButton > button:hover {
-        background-color: #1976D2;
         transform: translateY(-2px);
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        box-shadow: 0 4px 12px rgba(108, 99, 255, 0.3);
     }
     
-    .css-1r6slb0 {
-        background-color: #ffffff;
+    .template-card {
+        background: white;
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .template-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    .stProgress > div > div > div {
+        background: linear-gradient(45deg, #6c63ff, #4c46b3);
         border-radius: 10px;
-        padding: 20px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
     }
     
-    /* Dark theme support for content boxes */
+    .feedback-item {
+        background: #f8f9fa;
+        border-left: 4px solid #6c63ff;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 0 10px 10px 0;
+        transition: all 0.3s ease;
+    }
+    
+    .feedback-item:hover {
+        transform: translateX(5px);
+        background: #f0f1f2;
+    }
+    
+    .resume-preview {
+        background: white;
+        padding: 2rem;
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        font-family: 'Courier New', monospace;
+        margin: 1rem 0;
+        border: 2px solid #e0e0e0;
+    }
+    
+    .header-container {
+        background: linear-gradient(45deg, #6c63ff, #4c46b3);
+        padding: 2rem;
+        border-radius: 15px;
+        color: white;
+        margin-bottom: 2rem;
+        text-align: center;
+    }
+    
+    .header-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+    }
+    
+    .header-subtitle {
+        font-size: 1.2rem;
+        opacity: 0.9;
+    }
+    
     @media (prefers-color-scheme: dark) {
         .css-1r6slb0 {
-            background-color: #1e1e1e;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            background: #1e1e1e;
         }
-    }
-    
-    .resume-output {
-        background-color: #f8f9fa;
-        padding: 20px;
-        border-radius: 5px;
-        font-family: 'Courier New', monospace;
-        white-space: pre-wrap;
-        margin-top: 20px;
-        border: 1px solid #e0e0e0;
-        color: #000000;
-    }
-    
-    /* Dark theme support for resume output */
-    @media (prefers-color-scheme: dark) {
-        .resume-output {
-            background-color: #2b2b2b;
+        
+        .stTextInput > div > div > input,
+        .stTextArea > div > div > textarea {
+            background-color: #2d2d2d;
             color: #ffffff;
             border-color: #404040;
         }
-    }
-    
-    .info-box {
-        background-color: #E3F2FD;
-        padding: 20px;
-        border-radius: 5px;
-        margin-bottom: 30px;
-        border-left: 5px solid #1E88E5;
-    }
-    
-    .required-field::after {
-        content: " *";
-        color: red;
-    }
-    
-    .tab-content {
-        padding: 20px;
-        background-color: white;
-        border-radius: 0 0 5px 5px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    
-    /* Dark theme support for tab content */
-    @media (prefers-color-scheme: dark) {
-        .tab-content {
-            background-color: #1e1e1e;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        
+        .feedback-item {
+            background: #2d2d2d;
+        }
+        
+        .resume-preview {
+            background: #1e1e1e;
+            border-color: #404040;
+            color: #ffffff;
         }
     }
     </style>
 """, unsafe_allow_html=True)
 
 # Backend URL
-backend_url = "http://127.0.0.1:8000/generate_resume"
+BACKEND_URL = "http://127.0.0.1:8090"
 
-# Header section
+# Header section with gradient background
 st.markdown("""
-    <div style='text-align: center; padding: 20px;'>
-        <h1>🚀 AI-Powered Resume Builder</h1>
-        <div class='info-box'>
-            <h3 style='color: #1976D2; margin-top: 0;'>Create Your Professional Resume in Minutes</h3>
-            <p>Fill in your details below, and let our AI help you create a stunning resume that stands out!</p>
-        </div>
+    <div class="header-container">
+        <div class="header-title">AI Resume Builder Pro ✨</div>
+        <div class="header-subtitle">Create a professional resume in minutes with AI-powered suggestions</div>
     </div>
 """, unsafe_allow_html=True)
 
-# Create tabs for different sections
-tabs = st.tabs(["📋 Personal Info", "💼 Professional Details", "🎓 Education & Experience"])
+# Initialize session state for template selection
+if 'templates' not in st.session_state:
+    try:
+        response = requests.get(f"{BACKEND_URL}/get_templates")
+        st.session_state.templates = response.json()
+    except:
+        st.session_state.templates = {
+            "modern": {
+                "name": "Modern",
+                "description": "Clean and contemporary design"
+            }
+        }
+
+# Sidebar with template selection and tips
+with st.sidebar:
+    st.markdown("""
+        <div style='padding: 1rem 0;'>
+            <h2 style='color: #6c63ff;'>✨ Resume Templates</h2>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    selected_template = st.selectbox(
+        "Choose Your Style",
+        options=list(st.session_state.templates.keys()),
+        format_func=lambda x: st.session_state.templates[x]["name"]
+    )
+    
+    st.markdown(f"""
+        <div class='template-card'>
+            <h3 style='color: #6c63ff;'>{st.session_state.templates[selected_template]['name']}</h3>
+            <p>{st.session_state.templates[selected_template]['description']}</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    st.markdown("""
+        <div style='padding: 1rem 0;'>
+            <h3 style='color: #6c63ff;'>💡 Pro Tips</h3>
+            <ul style='color: #666;'>
+                <li>Use action verbs to describe your experience</li>
+                <li>Quantify achievements with numbers</li>
+                <li>Keep descriptions concise and impactful</li>
+                <li>Customize for each job application</li>
+            </ul>
+        </div>
+    """, unsafe_allow_html=True)
+
+# Main content tabs
+tabs = st.tabs(["📝 Personal Info", "💼 Professional Details", "🎓 Education & Skills"])
 
 # Personal Info Tab
 with tabs[0]:
-    st.markdown("<div class='tab-content'>", unsafe_allow_html=True)
-    st.subheader("Personal Information")
-    
+    st.markdown("<div class='animate-fade-in'>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
+    
     with col1:
-        name = st.text_input(
-            "Full Name",
-            placeholder="John Doe",
-            help="Enter your full name as it should appear on your resume"
-        )
-        email = st.text_input(
-            "Email",
-            placeholder="john.doe@email.com",
-            help="Enter your professional email address"
-        )
+        name = st.text_input("Full Name", placeholder="John Doe", help="Enter your full name as it should appear on your resume")
+        email = st.text_input("Email", placeholder="john.doe@email.com", help="Enter your professional email address")
     
     with col2:
-        phone = st.text_input(
-            "Phone Number",
-            placeholder="+1 (123) 456-7890",
-            help="Enter your contact number with country code"
-        )
-        location = st.text_input(
-            "Location",
-            placeholder="City, Country",
-            help="Enter your current location"
-        )
+        phone = st.text_input("Phone", placeholder="+1 (123) 456-7890", help="Enter your contact number")
+        location = st.text_input("Location", placeholder="City, Country", help="Enter your current location")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # Professional Details Tab
 with tabs[1]:
-    st.markdown("<div class='tab-content'>", unsafe_allow_html=True)
-    st.subheader("Professional Details")
-    
+    st.markdown("<div class='animate-fade-in'>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
+    
     with col1:
-        title = st.text_input(
-            "Professional Title",
-            placeholder="Software Engineer",
-            help="Enter your current or desired job title"
-        )
-        years_experience = st.number_input(
-            "Years of Experience",
-            min_value=0,
-            max_value=50,
-            value=0,
-            help="Enter your total years of professional experience"
-        )
+        title = st.text_input("Professional Title", placeholder="Software Engineer", help="Enter your current or desired job title")
+        years_experience = st.number_input("Years of Experience", min_value=0, max_value=50, value=0)
     
     with col2:
-        skills = st.text_area(
-            "Key Skills",
-            placeholder="Python, JavaScript, Project Management...",
-            help="Enter your skills separated by commas",
-            height=100
+        experience = st.text_area(
+            "Professional Experience",
+            placeholder="Position: Senior Software Engineer\nCompany: Tech Corp Inc.\nDuration: 2020 - Present\n\nKey Achievements:\n• Led development of key features\n• Improved system performance by 40%\n• Managed a team of 5 developers",
+            height=200
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Education & Experience Tab
+# Education & Skills Tab
 with tabs[2]:
-    st.markdown("<div class='tab-content'>", unsafe_allow_html=True)
-    st.subheader("Education & Experience")
-    
+    st.markdown("<div class='animate-fade-in'>", unsafe_allow_html=True)
     education = st.text_area(
-        "Education Background",
-        placeholder="""Degree: Bachelor of Science in Computer Science
-University: Example University
-Graduation Year: 2020
-GPA: 3.8/4.0
-
-Add more education details...""",
+        "Education",
+        placeholder="Degree: Bachelor of Science in Computer Science\nUniversity: Example University\nGraduation Year: 2020\nGPA: 3.8/4.0",
         height=150
     )
     
-    experience = st.text_area(
-        "Professional Experience",
-        placeholder="""Position: Senior Software Engineer
-Company: Tech Corp Inc.
-Duration: 2020 - Present
-Key Achievements:
-- Led development of key features
-- Improved system performance by 40%
-- Managed a team of 5 developers
-
-Add more experience...""",
-        height=200
+    skills = st.text_area(
+        "Skills",
+        placeholder="Python, JavaScript, React, Node.js, AWS, Docker",
+        help="Enter your skills separated by commas"
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -244,10 +277,10 @@ if st.button("✨ Generate Professional Resume", use_container_width=True):
     if not all([name, email, title, skills, education, experience]):
         st.error("⚠️ Please fill in all required fields!")
     else:
-        with st.spinner("🔄 Crafting your professional resume..."):
+        with st.spinner("🎨 Crafting your professional resume..."):
             try:
                 response = requests.post(
-                    backend_url,
+                    f"{BACKEND_URL}/generate_resume",
                     json={
                         "name": name,
                         "email": email,
@@ -257,30 +290,72 @@ if st.button("✨ Generate Professional Resume", use_container_width=True):
                         "years_experience": years_experience,
                         "skills": skills,
                         "education": education,
-                        "experience": experience
+                        "experience": experience,
+                        "template_style": selected_template
                     }
                 )
                 
                 if response.status_code == 200:
-                    resume_text = response.json().get("resume")
+                    data = response.json()
+                    resume_text = data.get("resume")
+                    score = data.get("score", 0)
+                    feedback = data.get("feedback", [])
+                    suggestions = data.get("suggestions", [])
+                    pdf_path = data.get("pdf_path")
                     
-                    # Success message
                     st.success("✅ Resume generated successfully!")
                     
-                    # Display the generated resume
-                    st.markdown("### 📄 Your Professional Resume")
-                    st.markdown(f'<div class="resume-output">{resume_text}</div>', unsafe_allow_html=True)
+                    # Display score and feedback in columns
+                    col1, col2 = st.columns([1, 2])
                     
-                    # Download button
-                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col1:
+                        st.markdown("""
+                            <div style='text-align: center; padding: 2rem;'>
+                                <h2 style='color: #6c63ff;'>Resume Score</h2>
+                                <div style='font-size: 3rem; font-weight: 700; color: #6c63ff;'>
+                                    {}%
+                                </div>
+                            </div>
+                        """.format(score), unsafe_allow_html=True)
+                        
+                        st.progress(score/100)
+                    
                     with col2:
+                        st.markdown("<h3 style='color: #6c63ff;'>🎯 Feedback & Suggestions</h3>", unsafe_allow_html=True)
+                        for item in feedback:
+                            st.markdown(f"<div class='feedback-item'>✨ {item}</div>", unsafe_allow_html=True)
+                        for item in suggestions:
+                            st.markdown(f"<div class='feedback-item'>💡 {item}</div>", unsafe_allow_html=True)
+                    
+                    # Display resume preview
+                    st.markdown("<h3 style='color: #6c63ff;'>📄 Your Professional Resume</h3>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='resume-preview'>{resume_text}</div>", unsafe_allow_html=True)
+                    
+                    # Download options
+                    col1, col2 = st.columns(2)
+                    with col1:
                         st.download_button(
-                            label="📥 Download Resume",
+                            label="📥 Download as Text",
                             data=resume_text,
                             file_name=f"{name.lower().replace(' ', '_')}_resume.txt",
                             mime="text/plain",
                             use_container_width=True
                         )
+                    
+                    with col2:
+                        if pdf_path:
+                            st.markdown(f"""
+                                <a href="{BACKEND_URL}/download_pdf/{pdf_path}" 
+                                   target="_blank" 
+                                   style="text-decoration: none; width: 100%;">
+                                    <button style="width: 100%; background: linear-gradient(45deg, #6c63ff, #4c46b3);
+                                                 color: white; padding: 0.8rem; border: none; border-radius: 10px;
+                                                 font-weight: 600; cursor: pointer;">
+                                        📥 Download as PDF
+                                    </button>
+                                </a>
+                            """, unsafe_allow_html=True)
+                
                 else:
                     st.error(f"❌ Error: {response.json().get('error', 'Unknown error occurred')}")
             
@@ -289,12 +364,13 @@ if st.button("✨ Generate Professional Resume", use_container_width=True):
 
 # Footer
 st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666; padding: 20px;'>
-        <p>Made with ❤️ by AI Resume Builder</p>
-        <p>Need help? Check out our <a href="#" style="color: #1E88E5;">documentation</a></p>
+st.markdown("""
+    <div style='text-align: center; padding: 1.5rem; color: #666;'>
+        <p>Made with ❤️ by AI Resume Builder Pro</p>
+        <p>
+            <a href="#" style="color: #6c63ff; text-decoration: none; margin: 0 1rem;">Documentation</a>
+            <a href="#" style="color: #6c63ff; text-decoration: none; margin: 0 1rem;">Support</a>
+            <a href="#" style="color: #6c63ff; text-decoration: none; margin: 0 1rem;">Privacy Policy</a>
+        </p>
     </div>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
