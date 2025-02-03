@@ -1,341 +1,404 @@
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-import logging
+from fastapi import FastAPI, Depends, HTTPException, status, Form, File, UploadFile
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime, timedelta
+from typing import List, Optional
+import jwt
+from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr
 import os
-from datetime import datetime
-from fpdf import FPDF
-import json
-import re
-from pathlib import Path
-import random
-from PIL import Image, ImageDraw, ImageFont
-import io
-import base64
+import logging
+import aiofiles
+from database import get_db, Admin, User, Resume
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-CORS(app)
+# Initialize FastAPI app
+app = FastAPI(title="Resume Builder API")
 
-# Create directories for temporary files
-TEMP_DIR = Path("temp_pdfs")
-TEMP_DIR.mkdir(exist_ok=True)
-PREVIEW_DIR = Path("template_previews")
-PREVIEW_DIR.mkdir(exist_ok=True)
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Resume templates with more variety and styling
-TEMPLATES = {
-    "modern": {
-        "name": "Modern",
-        "description": "Clean and contemporary design with a focus on readability",
-        "color_scheme": {"primary": "#1E88E5", "secondary": "#F5F5F5"},
-        "font": "Arial",
-        "sections": ["summary", "skills", "experience", "education"]
-    },
-    "professional": {
-        "name": "Professional",
-        "description": "Traditional format ideal for corporate positions",
-        "color_scheme": {"primary": "#2E7D32", "secondary": "#E8F5E9"},
-        "font": "Times New Roman",
-        "sections": ["experience", "skills", "education", "achievements"]
-    },
-    "creative": {
-        "name": "Creative",
-        "description": "Dynamic layout perfect for creative industries",
-        "color_scheme": {"primary": "#6200EA", "secondary": "#EDE7F6"},
-        "font": "Helvetica",
-        "sections": ["skills", "projects", "experience", "education"]
-    },
-    "minimalist": {
-        "name": "Minimalist",
-        "description": "Simple and elegant design that focuses on content",
-        "color_scheme": {"primary": "#212121", "secondary": "#F5F5F5"},
-        "font": "Calibri",
-        "sections": ["summary", "experience", "skills", "education"]
-    },
-    "executive": {
-        "name": "Executive",
-        "description": "Sophisticated design for senior positions",
-        "color_scheme": {"primary": "#B71C1C", "secondary": "#FFEBEE"},
-        "font": "Georgia",
-        "sections": ["summary", "achievements", "experience", "education"]
-    }
-}
+# Security
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# AI-powered suggestions
-SKILL_SUGGESTIONS = {
-    "software": ["Python", "JavaScript", "Java", "C++", "SQL", "AWS", "Docker", "Git"],
-    "marketing": ["Digital Marketing", "SEO", "Social Media", "Content Strategy", "Analytics"],
-    "design": ["UI/UX", "Adobe Creative Suite", "Figma", "Sketch", "Typography"],
-    "management": ["Project Management", "Team Leadership", "Agile", "Scrum", "Budget Planning"]
-}
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-ACTION_WORDS = {
-    "leadership": ["Led", "Managed", "Directed", "Supervised", "Orchestrated"],
-    "achievement": ["Achieved", "Exceeded", "Improved", "Increased", "Reduced"],
-    "development": ["Developed", "Created", "Designed", "Implemented", "Built"],
-    "collaboration": ["Collaborated", "Partnered", "Coordinated", "Facilitated"]
-}
+# Static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-def get_skill_suggestions(title):
-    """Get relevant skill suggestions based on job title"""
-    title_lower = title.lower()
-    suggestions = []
+# Pydantic models
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class AdminBase(BaseModel):
+    username: str
+    email: EmailStr
+
+class AdminCreate(AdminBase):
+    password: str
+
+class AdminResponse(AdminBase):
+    id: int
+    created_at: datetime
     
-    if any(word in title_lower for word in ["developer", "engineer", "programmer"]):
-        suggestions.extend(SKILL_SUGGESTIONS["software"])
-    if any(word in title_lower for word in ["marketing", "seo", "content"]):
-        suggestions.extend(SKILL_SUGGESTIONS["marketing"])
-    if any(word in title_lower for word in ["designer", "creative", "artist"]):
-        suggestions.extend(SKILL_SUGGESTIONS["design"])
-    if any(word in title_lower for word in ["manager", "director", "lead"]):
-        suggestions.extend(SKILL_SUGGESTIONS["management"])
-    
-    return list(set(suggestions))
+    class Config:
+        from_attributes = True
 
-def get_action_word_suggestions(experience):
-    """Suggest action words to improve experience descriptions"""
-    suggestions = []
-    exp_lower = experience.lower()
-    
-    if any(word in exp_lower for word in ["team", "group", "department"]):
-        suggestions.extend(ACTION_WORDS["leadership"])
-    if any(word in exp_lower for word in ["improve", "increase", "reduce"]):
-        suggestions.extend(ACTION_WORDS["achievement"])
-    if any(word in exp_lower for word in ["create", "build", "develop"]):
-        suggestions.extend(ACTION_WORDS["development"])
-    if any(word in exp_lower for word in ["team", "partner", "collaborate"]):
-        suggestions.extend(ACTION_WORDS["collaboration"])
-    
-    return list(set(suggestions))
+class UserBase(BaseModel):
+    name: str
+    email: EmailStr
+    title: str
 
-def score_resume(data):
-    """Enhanced resume scoring with more detailed feedback"""
-    score = 0
-    feedback = []
-    suggestions = []
+class UserCreate(UserBase):
+    pass
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    title: str
+    created_at: datetime
     
-    # Content length and quality
-    if len(data['experience']) > 200:
-        score += 15
+    class Config:
+        from_attributes = True
+
+class ResumeBase(BaseModel):
+    template_style: str
+    score: int = 0
+    pdf_path: str
+
+class ResumeCreate(ResumeBase):
+    pass
+
+class ResumeResponse(BaseModel):
+    id: int
+    user_id: int
+    template_style: str
+    score: int
+    pdf_path: str
+    downloaded_count: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class ResumeRequest(BaseModel):
+    # User info
+    name: str
+    email: EmailStr
+    title: str
+    
+    # Resume info
+    template_style: str
+    score: int = 0
+    pdf_path: str
+
+# Helper functions
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
     else:
-        feedback.append("Add more detail to your experience section")
-    
-    # Skills analysis
-    skills = [s.strip() for s in data['skills'].split(',')]
-    if len(skills) >= 5:
-        score += 15
-    else:
-        feedback.append("List at least 5 relevant skills")
-    
-    # Suggested skills
-    suggested_skills = get_skill_suggestions(data['title'])
-    missing_important_skills = [s for s in suggested_skills if s not in skills]
-    if missing_important_skills:
-        suggestions.append(f"Consider adding these relevant skills: {', '.join(missing_important_skills[:3])}")
-    
-    # Education details
-    if len(data['education']) > 100:
-        score += 15
-    else:
-        feedback.append("Provide more details about your education")
-    
-    # Contact information
-    if all([data['email'], data['phone'], data['location']]):
-        score += 15
-    else:
-        feedback.append("Include all contact information")
-    
-    # Action words in experience
-    action_words = get_action_word_suggestions(data['experience'])
-    exp_lower = data['experience'].lower()
-    action_word_count = sum(1 for word in action_words if word.lower() in exp_lower)
-    
-    if action_word_count >= 3:
-        score += 20
-    else:
-        suggestions.append(f"Try using these action words: {', '.join(action_words[:3])}")
-    
-    # Length of professional experience
-    if data.get('years_experience', 0) > 0:
-        score += 10
-    
-    # Formatting and structure
-    if len(data['experience'].split('\n')) > 3:
-        score += 10
-    else:
-        feedback.append("Break down your experience into more bullet points")
-    
-    return score, feedback, suggestions
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
-def generate_pdf_resume(data, template_style="modern"):
-    """Enhanced PDF generation with better styling"""
-    template = TEMPLATES[template_style]
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # Set colors
-    primary_color = template["color_scheme"]["primary"]
-    secondary_color = template["color_scheme"]["secondary"]
-    
-    # Header
-    pdf.set_fill_color(int(primary_color[1:3], 16), int(primary_color[3:5], 16), int(primary_color[5:7], 16))
-    pdf.rect(0, 0, 210, 40, 'F')
-    
-    # Name and title
-    pdf.set_font(template["font"], 'B', 24)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 20, data['name'], ln=True, align='C')
-    
-    pdf.set_font(template["font"], '', 14)
-    pdf.cell(0, 10, data['title'], ln=True, align='C')
-    
-    # Contact information
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font(template["font"], '', 10)
-    contact_info = f"{data['email']} | {data['phone']} | {data['location']}"
-    pdf.cell(0, 10, contact_info, ln=True, align='C')
-    
-    # Skills section
-    pdf.set_font(template["font"], 'B', 14)
-    pdf.cell(0, 10, "Skills", ln=True)
-    pdf.set_font(template["font"], '', 12)
-    skills_text = ", ".join(data['skills'].split(","))
-    pdf.multi_cell(0, 10, skills_text)
-    
-    # Experience section
-    pdf.ln(10)
-    pdf.set_font(template["font"], 'B', 14)
-    pdf.cell(0, 10, "Professional Experience", ln=True)
-    pdf.set_font(template["font"], '', 12)
-    pdf.multi_cell(0, 10, data['experience'])
-    
-    # Education section
-    pdf.ln(10)
-    pdf.set_font(template["font"], 'B', 14)
-    pdf.cell(0, 10, "Education", ln=True)
-    pdf.set_font(template["font"], '', 12)
-    pdf.multi_cell(0, 10, data['education'])
-    
-    # Save PDF
-    pdf_path = TEMP_DIR / f"resume_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    pdf.output(str(pdf_path))
-    return pdf_path
+def authenticate_admin(username: str, password: str, db: Session):
+    admin = db.query(Admin).filter(Admin.username == username).first()
+    if not admin:
+        return False
+    if not verify_password(password, admin.hashed_password):
+        return False
+    return admin
 
-def generate_mock_resume(data, template_style="modern"):
-    """Generate a mock resume with enhanced styling"""
-    template = TEMPLATES[template_style]
-    
-    resume_template = f"""
-{template['name'].upper()} RESUME TEMPLATE
-
-{data['name'].upper()}
-{data['title']}
-{data['email']} | {data.get('phone', 'Phone not provided')} | {data.get('location', 'Location not provided')}
-
-PROFESSIONAL SUMMARY
---------------------
-{data['title']} with {data.get('years_experience', 0)} years of experience, specializing in {data['skills'].split(',')[0]}.
-
-SKILLS
--------
-{', '.join(data['skills'].split(','))}
-
-EDUCATION
----------
-{data['education']}
-
-PROFESSIONAL EXPERIENCE
-----------------------
-{data['experience']}
-
-Note: This is a demo resume. For production use, please configure a valid OpenAI API key.
-"""
-    return resume_template
-
-@app.route("/get_templates", methods=["GET"])
-def get_templates():
-    """Get available resume templates"""
-    return jsonify(TEMPLATES)
-
-@app.route("/get_suggestions", methods=["POST"])
-def get_suggestions():
-    """Get AI-powered suggestions for resume improvement"""
+async def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
-        data = request.get_json()
-        skill_suggestions = get_skill_suggestions(data.get('title', ''))
-        action_word_suggestions = get_action_word_suggestions(data.get('experience', ''))
-        
-        return jsonify({
-            "skill_suggestions": skill_suggestions,
-            "action_word_suggestions": action_word_suggestions
-        })
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except jwt.PyJWTError:
+        raise credentials_exception
+    admin = db.query(Admin).filter(Admin.username == token_data.username).first()
+    if admin is None:
+        raise credentials_exception
+    return admin
+
+# Routes
+@app.post("/token", response_model=Token)
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    logger.info(f"Login attempt for user: {form_data.username}")
+    try:
+        # Debug: Check if admin exists
+        admin = db.query(Admin).filter(Admin.username == form_data.username).first()
+        if not admin:
+            logger.warning(f"Admin not found: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        # Debug: Check password
+        logger.info(f"Verifying password for admin: {form_data.username}")
+        if not verify_password(form_data.password, admin.hashed_password):
+            logger.warning(f"Invalid password for admin: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": admin.username}, expires_delta=access_token_expires
+        )
+        logger.info(f"Successful login for user: {form_data.username}")
+        return {"access_token": access_token, "token_type": "bearer"}
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error during login: {str(e)}")
+        raise
 
-@app.route("/generate_resume", methods=["POST"])
-def generate_resume():
+@app.post("/admin/create", response_model=Token)
+async def create_admin(admin: AdminCreate, db: Session = Depends(get_db)):
+    logger.info(f"Creating new admin user: {admin.username}")
     try:
-        data = request.get_json()
-        logger.info("Received resume generation request")
+        # Check if admin already exists
+        db_admin = db.query(Admin).filter(
+            (Admin.username == admin.username) | (Admin.email == admin.email)
+        ).first()
+        if db_admin:
+            raise HTTPException(
+                status_code=400,
+                detail="Username or email already registered"
+            )
+            
+        # Create new admin
+        db_admin = Admin(
+            username=admin.username,
+            email=admin.email,
+            hashed_password=get_password_hash(admin.password)
+        )
+        db.add(db_admin)
+        db.commit()
+        db.refresh(db_admin)
         
-        # Validate required fields
-        required_fields = ['name', 'email', 'title', 'skills', 'education', 'experience']
-        missing_fields = [field for field in required_fields if field not in data]
-        
-        if missing_fields:
-            error_msg = f"Missing required fields: {', '.join(missing_fields)}"
-            logger.warning(error_msg)
-            return jsonify({"error": error_msg}), 400
-
-        # Get template style
-        template_style = data.get('template_style', 'modern')
-        if template_style not in TEMPLATES:
-            template_style = 'modern'
-
-        # Generate resume content
-        resume_content = generate_mock_resume(data, template_style)
-        
-        # Generate PDF
-        pdf_path = generate_pdf_resume(data, template_style)
-        
-        # Score resume and get suggestions
-        score, feedback, suggestions = score_resume(data)
-        
-        if resume_content:
-            logger.info("Successfully generated resume")
-            return jsonify({
-                "resume": resume_content,
-                "score": score,
-                "feedback": feedback,
-                "suggestions": suggestions,
-                "pdf_path": str(pdf_path.name)
-            })
-        else:
-            error_msg = "Failed to generate resume"
-            logger.error(error_msg)
-            return jsonify({"error": error_msg}), 500
-
+        # Generate token
+        access_token = create_access_token(data={"sub": admin.username})
+        logger.info(f"Successfully created admin user: {admin.username}")
+        return {"access_token": access_token, "token_type": "bearer"}
     except Exception as e:
-        error_msg = f"Server error: {str(e)}"
-        logger.error(error_msg)
-        return jsonify({"error": error_msg}), 500
+        logger.error(f"Error creating admin user: {str(e)}")
+        db.rollback()
+        raise
 
-@app.route("/download_pdf/<filename>", methods=["GET"])
-def download_pdf(filename):
-    """Download generated PDF resume"""
+@app.post("/generate_resume", response_model=ResumeResponse)
+async def generate_resume(request: ResumeRequest, db: Session = Depends(get_db)):
+    """Generate a new resume for a user"""
+    logger.info(f"Generating resume for user: {request.email}")
     try:
-        return send_file(
-            TEMP_DIR / filename,
-            as_attachment=True,
-            download_name=f"resume_{datetime.now().strftime('%Y%m%d')}.pdf"
+        # Create or get existing user
+        user = db.query(User).filter(User.email == request.email).first()
+        if not user:
+            user = User(
+                name=request.name,
+                email=request.email,
+                title=request.title
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            logger.info(f"Created new user: {user.email}")
+        
+        # Ensure resumes directory exists
+        os.makedirs("static/resumes", exist_ok=True)
+        
+        # Generate PDF path
+        pdf_filename = f"{user.email.replace('@', '_').replace('.', '_')}_{int(datetime.utcnow().timestamp())}.pdf"
+        pdf_path = os.path.join("static/resumes", pdf_filename)
+        
+        # Create resume entry
+        resume = Resume(
+            user_id=user.id,
+            template_style=request.template_style,
+            score=request.score,
+            pdf_path=pdf_path,
+            downloaded_count=0
+        )
+        db.add(resume)
+        db.commit()
+        db.refresh(resume)
+        logger.info(f"Created resume entry: {resume.id}")
+        
+        # Create a simple PDF (placeholder)
+        try:
+            c = canvas.Canvas(pdf_path, pagesize=letter)
+            c.drawString(100, 750, f"Name: {user.name}")
+            c.drawString(100, 730, f"Email: {user.email}")
+            c.drawString(100, 710, f"Title: {user.title}")
+            c.drawString(100, 690, f"Template: {resume.template_style}")
+            c.save()
+            logger.info(f"Generated PDF: {pdf_path}")
+        except Exception as e:
+            logger.error(f"Error generating PDF: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate PDF"
+            )
+        
+        return resume
+        
+    except Exception as e:
+        logger.error(f"Error generating resume: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+@app.get("/admin/stats", dependencies=[Depends(get_current_admin)])
+async def get_admin_stats(db: Session = Depends(get_db)):
+    logger.info("Fetching admin stats")
+    try:
+        total_users = db.query(User).count()
+        total_resumes = db.query(Resume).count()
+        total_downloads = db.query(func.sum(Resume.downloaded_count)).scalar() or 0
+        
+        logger.info("Admin stats fetched successfully")
+        return {
+            "total_users": total_users,
+            "total_resumes": total_resumes,
+            "total_downloads": total_downloads
+        }
+    except Exception as e:
+        logger.error(f"Error fetching admin stats: {str(e)}")
+        raise
+
+@app.get("/admin/users", response_model=List[UserResponse], dependencies=[Depends(get_current_admin)])
+async def get_all_users(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    logger.info("Fetching all users")
+    try:
+        users = db.query(User).offset(skip).limit(limit).all()
+        logger.info("Users fetched successfully")
+        return users
+    except Exception as e:
+        logger.error(f"Error fetching users: {str(e)}")
+        raise
+
+@app.get("/admin/resumes", response_model=List[ResumeResponse], dependencies=[Depends(get_current_admin)])
+async def get_all_resumes(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    logger.info("Fetching all resumes")
+    try:
+        resumes = db.query(Resume).offset(skip).limit(limit).all()
+        logger.info("Resumes fetched successfully")
+        return resumes
+    except Exception as e:
+        logger.error(f"Error fetching resumes: {str(e)}")
+        raise
+
+@app.get("/user/resumes", response_model=list[ResumeResponse])
+async def get_user_resumes(email: str, db: Session = Depends(get_db)):
+    """Get all resumes for a specific user by email"""
+    logger.info(f"Fetching resumes for user: {email}")
+    try:
+        # Get user
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            logger.warning(f"User not found: {email}")
+            return []
+            
+        # Get resumes
+        resumes = db.query(Resume).filter(Resume.user_id == user.id).order_by(Resume.created_at.desc()).all()
+        logger.info(f"Found {len(resumes)} resumes for user: {email}")
+        return resumes
+        
+    except Exception as e:
+        logger.error(f"Error fetching user resumes: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+@app.get("/download_resume/{resume_id}")
+async def download_resume(resume_id: int, db: Session = Depends(get_db)):
+    """Download a specific resume by ID"""
+    logger.info(f"Downloading resume: {resume_id}")
+    try:
+        resume = db.query(Resume).filter(Resume.id == resume_id).first()
+        if not resume:
+            raise HTTPException(status_code=404, detail="Resume not found")
+        
+        # Increment download count
+        resume.downloaded_count += 1
+        db.commit()
+        
+        # Return PDF file
+        return FileResponse(
+            resume.pdf_path,
+            media_type="application/pdf",
+            filename=f"resume_{resume_id}.pdf"
         )
     except Exception as e:
-        return jsonify({"error": str(e)}), 404
+        logger.error(f"Error downloading resume: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    logger.info("Starting Flask server in demo mode...")
-    logger.warning("Running with mock resume generation. For production use, please configure a valid OpenAI API key.")
-    app.run(debug=True, port=8090)
+    import uvicorn
+    logger.info("Starting FastAPI server...")
+    uvicorn.run(
+        "app:app",
+        host="127.0.0.1",
+        port=8090,
+        reload=True,
+        log_level="debug",
+        access_log=True
+    )
