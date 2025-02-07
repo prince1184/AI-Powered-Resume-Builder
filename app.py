@@ -16,6 +16,7 @@ import aiofiles
 from database import get_db, Admin, User, Resume
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
+from fpdf import FPDF
 
 # Configure logging
 logging.basicConfig(
@@ -111,12 +112,23 @@ class ResumeRequest(BaseModel):
     # User info
     name: str
     email: EmailStr
-    title: str
+    title: str = "Professional"
+    phone: str = ""
+    location: str = ""
+    website: str = ""
+    linkedin: str = ""
+    github: str = ""
+    summary: str = ""
+    experience: str = ""
+    education: str = ""
+    skills: str = ""
+    languages: str = ""
+    certificates: str = ""
     
     # Resume info
     template_style: str
     score: int = 0
-    pdf_path: str
+    pdf_path: str = ""
 
 # Helper functions
 def verify_password(plain_password, hashed_password):
@@ -161,6 +173,182 @@ async def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = D
     if admin is None:
         raise credentials_exception
     return admin
+
+def calculate_resume_score(resume: ResumeRequest) -> int:
+    """Calculate a score for the resume based on content completeness and quality"""
+    score = 0
+    
+    # Basic information (30 points)
+    if resume.name: score += 5
+    if resume.email: score += 5
+    if resume.phone: score += 5
+    if resume.location: score += 5
+    if resume.title: score += 5
+    if any([resume.website, resume.linkedin, resume.github]): score += 5
+    
+    # Professional Summary (10 points)
+    if resume.summary and len(resume.summary.split()) >= 30:
+        score += 10
+    elif resume.summary:
+        score += 5
+    
+    # Experience (25 points)
+    if resume.experience:
+        exp_lines = resume.experience.strip().split('\n')
+        score += min(len(exp_lines) * 5, 25)
+    
+    # Education (15 points)
+    if resume.education:
+        edu_lines = resume.education.strip().split('\n')
+        score += min(len(edu_lines) * 5, 15)
+    
+    # Skills (10 points)
+    if resume.skills:
+        skills_list = [s.strip() for s in resume.skills.split(',')]
+        score += min(len(skills_list), 10)
+    
+    # Languages (5 points)
+    if resume.languages:
+        languages_list = resume.languages.split(',')
+        score += min(len(languages_list) * 2, 5)
+    
+    # Certificates (5 points)
+    if resume.certificates:
+        cert_lines = resume.certificates.strip().split('\n')
+        score += min(len(cert_lines) * 2, 5)
+    
+    return min(score, 100)
+
+def generate_pdf_resume(resume: ResumeRequest, output_path: str):
+    """Generate a PDF resume using FPDF"""
+    from fpdf import FPDF
+    
+    # Create PDF object
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Set colors based on template
+    colors = {
+        "modern": {"primary": (44, 62, 80), "secondary": (52, 152, 219)},
+        "professional": {"primary": (52, 73, 94), "secondary": (46, 204, 113)},
+        "creative": {"primary": (142, 68, 173), "secondary": (231, 76, 60)},
+        "minimal": {"primary": (44, 62, 80), "secondary": (149, 165, 166)},
+        "executive": {"primary": (44, 62, 80), "secondary": (241, 196, 15)}
+    }
+    
+    template = colors.get(resume.template_style, colors["modern"])
+    
+    # Header
+    pdf.set_font('Helvetica', 'B', 24)
+    pdf.set_text_color(*template["primary"])
+    pdf.cell(0, 20, resume.name, ln=True, align='C')
+    
+    # Title
+    pdf.set_font('Helvetica', 'I', 16)
+    pdf.set_text_color(*template["secondary"])
+    pdf.cell(0, 10, resume.title, ln=True, align='C')
+    
+    # Contact Info
+    pdf.set_font('Helvetica', '', 10)
+    pdf.set_text_color(*template["primary"])
+    contact_info = []
+    if resume.email: contact_info.append(resume.email)
+    if resume.phone: contact_info.append(resume.phone)
+    if resume.location: contact_info.append(resume.location)
+    pdf.cell(0, 10, " | ".join(contact_info), ln=True, align='C')
+    
+    # Online Presence
+    if any([resume.website, resume.linkedin, resume.github]):
+        pdf.ln(5)
+        online_info = []
+        if resume.website: online_info.append(f"Website: {resume.website}")
+        if resume.linkedin: online_info.append(f"LinkedIn: {resume.linkedin}")
+        if resume.github: online_info.append(f"GitHub: {resume.github}")
+        pdf.cell(0, 10, " | ".join(online_info), ln=True, align='C')
+    
+    # Summary
+    if resume.summary:
+        pdf.ln(10)
+        pdf.set_font('Helvetica', 'B', 14)
+        pdf.set_text_color(*template["primary"])
+        pdf.cell(0, 10, "Professional Summary", ln=True)
+        pdf.set_font('Helvetica', '', 11)
+        pdf.set_text_color(0, 0, 0)
+        pdf.multi_cell(0, 6, resume.summary)
+    
+    # Experience
+    if resume.experience:
+        pdf.ln(10)
+        pdf.set_font('Helvetica', 'B', 14)
+        pdf.set_text_color(*template["primary"])
+        pdf.cell(0, 10, "Professional Experience", ln=True)
+        pdf.set_font('Helvetica', '', 11)
+        pdf.set_text_color(0, 0, 0)
+        for line in resume.experience.split('\n'):
+            if line.strip():
+                if line.startswith('•'):
+                    pdf.cell(10)  # Indent bullet points
+                pdf.multi_cell(0, 6, line)
+    
+    # Education
+    if resume.education:
+        pdf.ln(10)
+        pdf.set_font('Helvetica', 'B', 14)
+        pdf.set_text_color(*template["primary"])
+        pdf.cell(0, 10, "Education", ln=True)
+        pdf.set_font('Helvetica', '', 11)
+        pdf.set_text_color(0, 0, 0)
+        for line in resume.education.split('\n'):
+            if line.strip():
+                if line.startswith('•'):
+                    pdf.cell(10)
+                pdf.multi_cell(0, 6, line)
+    
+    # Skills
+    if resume.skills:
+        pdf.ln(10)
+        pdf.set_font('Helvetica', 'B', 14)
+        pdf.set_text_color(*template["primary"])
+        pdf.cell(0, 10, "Skills", ln=True)
+        pdf.set_font('Helvetica', '', 11)
+        pdf.set_text_color(0, 0, 0)
+        skills_list = [s.strip() for s in resume.skills.split(',')]
+        skills_text = " • ".join(skills_list)
+        pdf.multi_cell(0, 6, skills_text)
+    
+    # Languages
+    if resume.languages:
+        pdf.ln(10)
+        pdf.set_font('Helvetica', 'B', 14)
+        pdf.set_text_color(*template["primary"])
+        pdf.cell(0, 10, "Languages", ln=True)
+        pdf.set_font('Helvetica', '', 11)
+        pdf.set_text_color(0, 0, 0)
+        languages_list = [l.strip() for l in resume.languages.split(',')]
+        languages_text = " • ".join(languages_list)
+        pdf.multi_cell(0, 6, languages_text)
+    
+    # Certificates
+    if resume.certificates:
+        pdf.ln(10)
+        pdf.set_font('Helvetica', 'B', 14)
+        pdf.set_text_color(*template["primary"])
+        pdf.cell(0, 10, "Certifications", ln=True)
+        pdf.set_font('Helvetica', '', 11)
+        pdf.set_text_color(0, 0, 0)
+        for line in resume.certificates.split('\n'):
+            if line.strip():
+                if line.startswith('•'):
+                    pdf.cell(10)
+                pdf.multi_cell(0, 6, line)
+    
+    # Save PDF
+    try:
+        pdf.output(output_path)
+        return True
+    except Exception as e:
+        logger.error(f"Error generating PDF: {str(e)}")
+        return False
 
 # Routes
 @app.post("/token", response_model=Token)
@@ -236,9 +424,8 @@ async def create_admin(admin: AdminCreate, db: Session = Depends(get_db)):
 @app.post("/generate_resume", response_model=ResumeResponse)
 async def generate_resume(request: ResumeRequest, db: Session = Depends(get_db)):
     """Generate a new resume for a user"""
-    logger.info(f"Generating resume for user: {request.email}")
     try:
-        # Create or get existing user
+        # Find or create user
         user = db.query(User).filter(User.email == request.email).first()
         if not user:
             user = User(
@@ -249,20 +436,20 @@ async def generate_resume(request: ResumeRequest, db: Session = Depends(get_db))
             db.add(user)
             db.commit()
             db.refresh(user)
-            logger.info(f"Created new user: {user.email}")
+            logger.info(f"Created new user: {user.id}")
         
-        # Ensure resumes directory exists
-        os.makedirs("static/resumes", exist_ok=True)
-        
-        # Generate PDF path
+        # Generate unique filename
         pdf_filename = f"{user.email.replace('@', '_').replace('.', '_')}_{int(datetime.utcnow().timestamp())}.pdf"
         pdf_path = os.path.join("static/resumes", pdf_filename)
+        
+        # Calculate resume score
+        score = calculate_resume_score(request)
         
         # Create resume entry
         resume = Resume(
             user_id=user.id,
             template_style=request.template_style,
-            score=request.score,
+            score=score,
             pdf_path=pdf_path,
             downloaded_count=0
         )
@@ -271,27 +458,17 @@ async def generate_resume(request: ResumeRequest, db: Session = Depends(get_db))
         db.refresh(resume)
         logger.info(f"Created resume entry: {resume.id}")
         
-        # Create a simple PDF (placeholder)
-        try:
-            c = canvas.Canvas(pdf_path, pagesize=letter)
-            c.drawString(100, 750, f"Name: {user.name}")
-            c.drawString(100, 730, f"Email: {user.email}")
-            c.drawString(100, 710, f"Title: {user.title}")
-            c.drawString(100, 690, f"Template: {resume.template_style}")
-            c.save()
-            logger.info(f"Generated PDF: {pdf_path}")
-        except Exception as e:
-            logger.error(f"Error generating PDF: {str(e)}")
+        # Generate PDF
+        if not generate_pdf_resume(request, pdf_path):
             raise HTTPException(
                 status_code=500,
-                detail="Failed to generate PDF"
+                detail="Failed to generate PDF resume"
             )
         
         return resume
         
     except Exception as e:
-        logger.error(f"Error generating resume: {str(e)}")
-        db.rollback()
+        logger.error(f"Error in generate_resume: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=str(e)

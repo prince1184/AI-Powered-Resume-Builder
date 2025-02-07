@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, text, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, text, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -31,18 +31,22 @@ class Admin(Base):
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=func.now())
 
 class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
+    name = Column(String, index=True)
     email = Column(String, unique=True, index=True)
-    phone = Column(String)
-    location = Column(String)
     title = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    phone = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    linkedin = Column(String, nullable=True)
+    github = Column(String, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    
     resumes = relationship("Resume", back_populates="user")
 
 class Resume(Base):
@@ -52,11 +56,12 @@ class Resume(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     template_style = Column(String)
     content = Column(String)
-    score = Column(Integer)
+    score = Column(Integer, default=0)
     feedback = Column(String)
     pdf_path = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
     downloaded_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+    
     user = relationship("User", back_populates="resumes")
 
 # Create SessionLocal class
